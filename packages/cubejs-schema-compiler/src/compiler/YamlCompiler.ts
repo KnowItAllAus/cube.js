@@ -131,6 +131,7 @@ export class YamlCompiler {
     cubeObj.segments = this.yamlArrayToObj(cubeObj.segments || [], 'segment', errorsReport);
     cubeObj.preAggregations = this.yamlArrayToObj(cubeObj.preAggregations || [], 'preAggregation', errorsReport);
     cubeObj.joins = this.yamlArrayToObj(cubeObj.joins || [], 'join', errorsReport);
+    // cubeObj.hierarchies = this.yamlArrayToObj(cubeObj.hierarchies || [], 'hierarchies', errorsReport);
 
     return this.transpileYaml(cubeObj, [], cubeObj.name, errorsReport);
   }
@@ -146,7 +147,20 @@ export class YamlCompiler {
             return this.parsePythonIntoArrowFunction(obj, cubeName, obj, errorsReport);
           } else if (Array.isArray(obj)) {
             const resultAst = t.program([t.expressionStatement(t.arrayExpression(obj.map(code => {
-              const ast = this.parsePythonAndTranspileToJs(code, errorsReport);
+              let ast: t.Program | t.NullLiteral | t.BooleanLiteral | t.NumericLiteral | null = null;
+              // Special case for accessPolicy.rowLevel.filter.values and other values-like fields
+              if (propertyPath[propertyPath.length - 1] === 'values') {
+                if (typeof code === 'string') {
+                  ast = this.parsePythonAndTranspileToJs(`f"${this.escapeDoubleQuotes(code)}"`, errorsReport);
+                } else if (typeof code === 'boolean') {
+                  ast = t.booleanLiteral(code);
+                } else if (typeof code === 'number') {
+                  ast = t.numericLiteral(code);
+                }
+              }
+              if (ast === null) {
+                ast = this.parsePythonAndTranspileToJs(code, errorsReport);
+              }
               return this.extractProgramBodyIfNeeded(ast);
             }).filter(ast => !!ast)))]);
             return this.astIntoArrowFunction(resultAst, '', cubeName);

@@ -24,6 +24,7 @@ on:
       - 'packages/cubejs-mysql-driver/**'
       - 'packages/cubejs-postgres-driver/**'
       - 'packages/cubejs-snowflake-driver/**'
+      - 'packages/cubejs-vertica-driver/**'
 
       # To test SQL API Push down
       - 'packages/cubejs-backend-native/**'
@@ -49,7 +50,8 @@ on:
       - 'packages/cubejs-mysql-driver/**'
       - 'packages/cubejs-postgres-driver/**'
       - 'packages/cubejs-snowflake-driver/**'
-
+      - 'packages/cubejs-vertica-driver/**'
+      
       # To test SQL API Push down
       - 'packages/cubejs-backend-native/**'
       - 'rust/cubesql/**'
@@ -144,6 +146,8 @@ jobs:
     if: (needs['latest-tag-sha'].outputs.sha != github.sha)
     runs-on: ubuntu-20.04
     timeout-minutes: 30
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
     steps:
       - name: Check out the repo
         uses: actions/checkout@v4
@@ -154,6 +158,7 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+        if: (env.DOCKERHUB_USERNAME != '')
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
       - name: Download native build
@@ -167,7 +172,18 @@ jobs:
           context: .
           file: ./packages/cubejs-docker/testing-drivers.Dockerfile
           tags: cubejs/cube:testing-drivers
-          push: true
+          push: ${{ (env.DOCKERHUB_USERNAME != '') }}
+      - name: Save Docker image as artifact
+        run: |
+          IMAGE_TAG=cubejs/cube:testing-drivers
+          docker save -o image.tar $IMAGE_TAG
+          gzip image.tar
+        continue-on-error: true
+      - name: Upload Docker image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: image.tar.gz
 
   tests:
     runs-on: ubuntu-20.04
@@ -182,11 +198,14 @@ jobs:
         databricks-jdbc
         databricks-jdbc-export-bucket-s3
         databricks-jdbc-export-bucket-azure
+        redshift
+        redshift-export-bucket-s3
         snowflake
         snowflake-export-bucket-s3
         snowflake-export-bucket-azure
         snowflake-export-bucket-azure-via-storage-integration
         snowflake-export-bucket-gcs
+        vertica
       # As per docs:
       # Secrets cannot be directly referenced in if: conditionals. Instead, consider setting
       # secrets as job-level environment variables, then referencing the environment variables
@@ -207,6 +226,8 @@ jobs:
           - mssql
           - mysql
           - postgres
+          - redshift
+          - redshift-export-bucket-s3
           - snowflake
           - snowflake-export-bucket-s3
           - snowflake-export-bucket-azure
@@ -261,6 +282,16 @@ jobs:
           cd packages/cubejs-testing-drivers
           yarn tsc
 
+      - name: Download Docker image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+
+      - name: Load Docker image into Docker Daemon
+        run: |
+          gunzip image.tar.gz
+          docker load -i image.tar
+
       - name: Run tests
         uses: nick-fields/retry@v3
         # It's enough to test for any one secret because they are set all at once or not set all
@@ -288,6 +319,11 @@ jobs:
           DRIVERS_TESTS_CUBEJS_DB_EXPORT_BUCKET_AWS_KEY: ${{ secrets.DRIVERS_TESTS_CUBEJS_DB_EXPORT_BUCKET_AWS_KEY }}
           DRIVERS_TESTS_CUBEJS_DB_EXPORT_BUCKET_AWS_SECRET: ${{ secrets.DRIVERS_TESTS_CUBEJS_DB_EXPORT_BUCKET_AWS_SECRET }}
 
+          # Redshift
+          DRIVERS_TESTS_CUBEJS_DB_REDSHIFT_HOST: ${{ secrets.DRIVERS_TESTS_CUBEJS_DB_REDSHIFT_HOST }}
+          DRIVERS_TESTS_CUBEJS_DB_REDSHIFT_USER: ${{ secrets.DRIVERS_TESTS_CUBEJS_DB_REDSHIFT_USER }}
+          DRIVERS_TESTS_CUBEJS_DB_REDSHIFT_PASS: ${{ secrets.DRIVERS_TESTS_CUBEJS_DB_REDSHIFT_PASS }}
+
           # Snowflake
           DRIVERS_TESTS_CUBEJS_DB_SNOWFLAKE_USER: ${{ secrets.DRIVERS_TESTS_CUBEJS_DB_SNOWFLAKE_USER }}
           DRIVERS_TESTS_CUBEJS_DB_SNOWFLAKE_PASS: ${{ secrets.DRIVERS_TESTS_CUBEJS_DB_SNOWFLAKE_PASS }}
@@ -300,3 +336,4 @@ jobs:
             cd ./packages/cubejs-testing-drivers
             export DEBUG=testcontainers
             yarn ${{ matrix.database }}-full
+
